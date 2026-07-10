@@ -56,7 +56,6 @@ def pick_new_day(done):
     feed = feedparser.parse(FEED_URL)
     days = {}
     for entry in feed.entries:
-        guid = entry.get("id") or entry.get("link")
         pp = entry.get("published_parsed")
         if not pp:
             continue
@@ -67,6 +66,9 @@ def pick_new_day(done):
                 break
         if not audio_url:
             continue
+        # This feed publishes items without guid or link; the audio URL is the
+        # only stable unique id, so use it as the dedup key fallback.
+        guid = entry.get("id") or entry.get("link") or audio_url
         day = time.strftime("%Y-%m-%d", pp)
         days.setdefault(day, []).append({
             "guid": guid,
