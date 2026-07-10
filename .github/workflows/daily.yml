@@ -1,0 +1,45 @@
+name: Sin Guion capture pipeline
+
+on:
+  schedule:
+    # Every 10 min inside the publishing window, weekdays.
+    # Times are UTC. Sin Guion publishes ~15:30-17:00 UTC (10:30-12:00 Lima),
+    # so poll 15-18 UTC with margin.
+    - cron: "*/10 15-18 * * 1-5"
+  workflow_dispatch: {}   # manual run button in the Actions tab
+
+permissions:
+  contents: write          # needed to commit the state file back
+
+concurrency:
+  group: capture           # stops overlapping runs from double-processing
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Run pipeline
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: python main.py
+      - name: Save state
+        run: |
+          if [ -n "$(git status --porcelain state/processed.json)" ]; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add state/processed.json
+            git commit -m "Update processed state"
+            git push
+          fi
