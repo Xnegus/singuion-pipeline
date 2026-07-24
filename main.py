@@ -28,6 +28,10 @@ STATE_FILE = pathlib.Path("state/processed.json")
 # Only process a day once its last part is at least this old, unless part 2/2
 # is already present. Protects against running between part 1 and part 2.
 SETTLE_MINUTES = 45
+# Date floor: never transcribe episode days older than this. The dashboard
+# tracker ignores them (its MIN_EPISODE_DATE) and each transcription costs
+# Gemini, so capture must not keep digging back through feed history either.
+MIN_EPISODE_DATE = "2026-06-12"
 
 
 # --- State: dedup by item id ------------------------------------------------
@@ -79,6 +83,8 @@ def pick_new_day(done):
         })
 
     for day in sorted(days, reverse=True):
+        if day < MIN_EPISODE_DATE:
+            continue   # older than the floor: stop digging back
         items = days[day]
         if all(i["guid"] in done for i in items):
             continue
