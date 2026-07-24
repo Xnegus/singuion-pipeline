@@ -44,3 +44,23 @@ jobs:
             git pull --rebase origin main
             git push
           fi
+
+      # Publish the tracking JSON to the dashboard. Runs every poll but does
+      # nothing (no Opus call) when there are no new episodes. Runs AFTER Save
+      # state so a failure here can never trigger a re-capture.
+      - name: Update dashboard
+        if: ${{ !cancelled() }}   # runs even if capture fails (e.g. Gemini 503); publishes nothing when there is no new episode
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          DASH_UPLOAD_URL: https://dash.diegogalindo.com/api/upload.php
+          DASH_UPLOAD_TOKEN: ${{ secrets.DASH_UPLOAD_TOKEN }}
+          SOURCE_NAME: "Sin Guion - Rosa María Palacios"
+          MOOD_SUBJECT: "Rosa María Palacios y el programa"
+          DAILY_NEWS_FOLDER_ID: "1Qjq8JB8YUghdRecalQYmgc5t29nyT0N8"
+          ARCHIVOS_FOLDER_ID: "1LCA0VazU6pU4s__Q7RS4KqCyGFDVoX4E"
+          OUTPUT_PATH: "rmp.json"
+          DASH_JSON_URL: https://dash.diegogalindo.com/rmp.json
+        run: python tracker.py
