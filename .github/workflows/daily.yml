@@ -63,4 +63,5 @@ jobs:
           ARCHIVOS_FOLDER_ID: "1LCA0VazU6pU4s__Q7RS4KqCyGFDVoX4E"
           OUTPUT_PATH: "rmp.json"
           DASH_JSON_URL: https://dash.diegogalindo.com/rmp.json
+          MIN_EPISODE_DATE: "2026-06-12"
         run: python tracker.py
