@@ -202,6 +202,7 @@ def build_prompt(current_doc, hilos, source_name, mood_subject, ep_date,
       "watchlist": "opcional",
       "state": "opcional (solo hilo del animo): green | amber | red",
       "state_rationale": "opcional: 1-2 frases",
+      "state_score": "opcional (solo hilo del animo): entero 0-100",
       "episode": {{"date": "{ep_date}", "title": "..."}},
       "replace_entries": [entrada, ...],
       "new_entries": [entrada, ...],
@@ -217,6 +218,7 @@ entrada = {{"title": str, "dates": ["YYYY-MM-DD", ...], "text": str, "summary": 
 - Hilos "cumulative": si un tema (saga) YA tiene entrada, usa updated_entries (match_title = titulo exacto actual) y en la entrada reescrita AGREGA "{ep_date}" a dates y actualiza text/summary; NO la dupliques en new_entries. Temas realmente nuevos van en new_entries con dates=["{ep_date}"].
 - CADA entrada (nueva o reescrita) lleva "summary": resumen ejecutivo denso en hechos (actores, fechas, cifras), menos de 100 palabras, en espanol.
 - Hilo del animo sobre la viabilidad del Peru ({mood_subject}): emite state y state_rationale reflejando el animo VIGENTE (no el promedio historico), basado en los comentarios editoriales de la transcripcion; incluye una cita breve en quote de la entrada si aplica. Cambia el estado solo si el tono lo justifica.
+- En el hilo del animo emite SIEMPRE ademas "state_score": un ENTERO 0-100 (0 = pesimismo maximo / rojo, 100 = optimismo maximo / verde), coherente con state (aprox red 0-35, amber 36-65, green 66-100) pero con variacion fina episodio a episodio segun el tono editorial del dia; emitelo aunque state no cambie. NOTA PARA FUTURAS EDICIONES DE ESTE PROMPT: conservar state_score, alimenta el historial de scoring del dashboard (lights_history.json).
 - Etiqueta "hapag-lloyd" en tags cuando el tema toque puertos, comercio exterior, commodities, tipo de cambio, fletes o politica economica peruana.
 {week_note}- Omite del delta todo hilo sin cambios. NO toques meta (el sistema la actualiza).
 - Ortografia espanola completa (tildes y enes). NO uses em-dash ni el simbolo de tilde solo. Montos en dolares formato USD 250,500.50. No inventes nada que no este en las fuentes.
@@ -300,7 +302,7 @@ def merge_delta(current, delta, ep_date, today, source_name):
                  "slug": slug, "title": th["title"],
                  "mode": th.get("mode") or "cumulative", "entries": []}
             threads.append(t)
-        for field in ("synthesis", "watchlist", "state", "state_rationale", "episode"):
+        for field in ("synthesis", "watchlist", "state", "state_rationale", "state_score", "episode"):
             if th.get(field) is not None:
                 t[field] = th[field]
         entries = t.setdefault("entries", [])
