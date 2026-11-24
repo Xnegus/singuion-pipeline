@@ -57,6 +57,7 @@ jobs:
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
           DASH_UPLOAD_URL: https://dash.diegogalindo.com/api/upload.php
           DASH_UPLOAD_TOKEN: ${{ secrets.DASH_UPLOAD_TOKEN }}
+          FEEDS_REPO_TOKEN: ${{ secrets.FEEDS_REPO_TOKEN }}
           SOURCE_NAME: "Sin Guion - Rosa María Palacios"
           MOOD_SUBJECT: "Rosa María Palacios y el programa"
           DAILY_NEWS_FOLDER_ID: "1Qjq8JB8YUghdRecalQYmgc5t29nyT0N8"

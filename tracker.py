@@ -10,8 +10,11 @@ Design (v2, delta merge):
      sources but returns ONLY A SMALL DELTA (new/updated entries per thread,
      state, synthesis). Python applies the delta deterministically and keeps
      the meta bookkeeping. Small outputs = cheap + no giant-JSON parse failures.
-  4. Publishes the updated JSON to the dashboard via upload.php after each
-     episode, guarded by quality gates.
+  4. Publishes the updated JSON after each episode, guarded by quality gates.
+     Since 24-Nov-2026 the publish target is the private feeds repo
+     (Xnegus/dash-feeds): the dashboard server PULLS that repo every 5 minutes
+     and validates each file before it goes live (api/pull.php). upload.php is
+     the fallback when FEEDS_REPO_TOKEN is not set or the repo push fails.
 
 Config (env):
   SOURCE_NAME           e.g. "Comite de Lectura - Las noticias con Augusto Townsend"
@@ -26,13 +29,17 @@ Config (env):
 Secrets (env):
   ANTHROPIC_API_KEY
   GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET / GDRIVE_REFRESH_TOKEN
-  DASH_UPLOAD_URL / DASH_UPLOAD_TOKEN
+  DASH_UPLOAD_URL / DASH_UPLOAD_TOKEN   (fallback path)
+  FEEDS_REPO_TOKEN      fine-grained token, Contents read/write on the feeds repo
+  FEEDS_REPO / FEEDS_BRANCH   optional, default Xnegus/dash-feeds / main
 """
 
 import os
 import re
 import sys
 import json
+import time
+import base64
 import datetime
 
 import requests
@@ -41,6 +48,10 @@ BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 MAX_ATTEMPTS = 2   # Opus calls per episode before giving up
+# Bluehost's bot challenge answers cookie-less requests with HTTP 409 + a script
+# that sets this cookie. Only matters on the fallback (direct site) path.
+SITE_COOKIES = {"humans_21909": "1"}
+GITHUB_API = "https://api.github.com"
 
 
 def cfg(name, default=None, required=False):
@@ -123,32 +134,123 @@ def collect_episodes(svc, folder_id):
 
 
 # --- Dashboard I/O -----------------------------------------------------------
-def fetch_published_json(url):
+def feeds_repo():
+    """(repo, branch, token) when the pull-publish path is configured, else None."""
+    token = cfg("FEEDS_REPO_TOKEN")
+    if not token:
+        return None
+    return cfg("FEEDS_REPO", "Xnegus/dash-feeds"), cfg("FEEDS_BRANCH", "main"), token
+
+
+def _gh(method, url, token, accept="application/vnd.github+json", **kw):
+    return requests.request(
+        method, url, timeout=120,
+        headers={"Authorization": f"Bearer {token}", "Accept": accept,
+                 "User-Agent": "dash-tracker/2", "X-GitHub-Api-Version": "2022-11-28"},
+        **kw)
+
+
+def fetch_repo_json(path):
+    """Current copy of `path` in the feeds repo; None if the file is not there yet."""
+    repo, branch, token = feeds_repo()
+    r = _gh("GET", f"{GITHUB_API}/repos/{repo}/contents/{path}", token,
+            accept="application/vnd.github.raw+json", params={"ref": branch})
+    if r.status_code == 404:
+        return None
+    if r.status_code != 200:
+        sys.exit(f"Feeds repo read failed for {path}: HTTP {r.status_code} {r.text[:200]}")
+    return r.json()
+
+
+def fetch_site_json(url):
+    """Currently published copy on the site; None only on a genuine 404.
+
+    Any other failure aborts: starting from an empty document would reprocess
+    every episode and overwrite the live feed with a near-empty file.
+    """
     try:
-        r = requests.get(url + "?_=" + lima_today(),
-                         headers={"User-Agent": BROWSER_UA}, timeout=60)
+        r = requests.get(url + "?_=" + str(int(time.time())),
+                         headers={"User-Agent": BROWSER_UA}, cookies=SITE_COOKIES,
+                         timeout=60)
         if r.status_code == 404:
             return None
         r.raise_for_status()
         return r.json()
     except Exception as e:
-        print(f"Could not fetch current {url}: {e}. Starting empty.")
-        return None
+        sys.exit(f"Could not fetch current {url}: {e}. Aborting (not starting empty).")
 
 
-def publish(json_obj, path):
+def fetch_published_json(url, path):
+    """Memory of processed episodes: the fuller of the repo copy and the site copy.
+
+    The site copy can be ahead of the repo right after the switch (a run that
+    still published through upload.php); the repo copy can be ahead of the site
+    for up to 5 minutes (pull interval).
+    """
+    site = fetch_site_json(url)
+    if not feeds_repo():
+        return site
+    repo_doc = fetch_repo_json(path)
+    if repo_doc is None:
+        return site
+    if site is not None and len(processed_dates(site)) > len(processed_dates(repo_doc)):
+        print("Site copy is ahead of the feeds repo; using the site copy as base.")
+        return site
+    return repo_doc
+
+
+def publish_repo(body, path, note):
+    repo, branch, token = feeds_repo()
+    url = f"{GITHUB_API}/repos/{repo}/contents/{path}"
+    last = None
+    for attempt in range(3):
+        sha = None
+        r = _gh("GET", url, token, params={"ref": branch})
+        if r.status_code == 200:
+            sha = r.json().get("sha")
+        elif r.status_code != 404:
+            last = f"sha lookup HTTP {r.status_code} {r.text[:200]}"
+            time.sleep(5)
+            continue
+        payload = {"message": f"{path}: {note}", "branch": branch,
+                   "content": base64.b64encode(body).decode("ascii")}
+        if sha:
+            payload["sha"] = sha
+        r = _gh("PUT", url, token, json=payload)
+        print("feeds repo ->", r.status_code)
+        if r.status_code in (200, 201):
+            return
+        last = f"PUT HTTP {r.status_code} {r.text[:200]}"
+        time.sleep(5)       # 409 = sha moved under us; loop re-reads it
+    raise RuntimeError(f"feeds repo publish failed: {last}")
+
+
+def publish_upload(body, path):
     url = cfg("DASH_UPLOAD_URL", required=True)
     token = cfg("DASH_UPLOAD_TOKEN", required=True)
-    body = json.dumps(json_obj, ensure_ascii=False, indent=2).encode("utf-8")
     r = requests.post(
         url,
         data={"token": token, "path": path},
         files={"file": (path, body, "application/json")},
-        headers={"User-Agent": BROWSER_UA},
+        headers={"User-Agent": BROWSER_UA}, cookies=SITE_COOKIES,
         timeout=120,
     )
     print("upload.php ->", r.status_code, r.text[:300])
+    if r.status_code == 409 and "humans_" in r.text:
+        sys.exit("upload.php answered the host bot challenge (HTTP 409) even with "
+                 "the cookie; the cookie name may have changed.")
     r.raise_for_status()
+
+
+def publish(json_obj, path, note="update"):
+    body = json.dumps(json_obj, ensure_ascii=False, indent=2).encode("utf-8")
+    if feeds_repo():
+        try:
+            publish_repo(body, path, note)
+            return
+        except Exception as e:
+            print(f"WARNING: {e}. Falling back to upload.php.")
+    publish_upload(body, path)
 
 
 # --- Claude Opus: delta extraction -------------------------------------------
@@ -355,7 +457,7 @@ def main():
         print("No episode files in Archivos; nothing to do.")
         return
 
-    current = fetch_published_json(dash_json_url) or dict(EMPTY_DOC)
+    current = fetch_published_json(dash_json_url, output_path) or dict(EMPTY_DOC)
     already = processed_dates(current)
     new_dates = sorted(d for d in episodes if d not in already)
 
@@ -396,7 +498,7 @@ def main():
         if not updated.get("threads"):
             sys.exit(f"Result for {d} has no threads; aborting.")
 
-        publish(updated, output_path)          # publish per episode so progress persists
+        publish(updated, output_path, f"through {d}")   # per episode so progress persists
         current = updated
         published_any = True
         changed = [t["slug"] for t in delta["threads"]]
