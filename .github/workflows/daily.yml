@@ -3,9 +3,10 @@ name: Sin Guion capture pipeline
 on:
   schedule:
     # Every 10 min inside the publishing window, weekdays.
-    # Times are UTC. Sin Guion publishes ~15:30-17:00 UTC (10:30-12:00 Lima),
-    # so poll 15-18 UTC with margin.
-    - cron: "*/10 15-18 * * 1-5"
+    # Times are UTC. Sin Guion usually publishes ~15:30-17:00 UTC (10:30-12:00 Lima),
+    # but some episodes come out in the afternoon (26-Nov-2026: 21:00 UTC), so
+    # poll 15:00-23:59 UTC (10 AM to 7 PM Lima). A poll with no new episode is cheap.
+    - cron: "*/10 15-23 * * 1-5"
   workflow_dispatch: {}   # manual run button in the Actions tab
 
 permissions:
